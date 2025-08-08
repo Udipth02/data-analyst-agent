@@ -3,62 +3,47 @@
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
-import numpy as np
 import matplotlib.pyplot as plt
+import io
 import base64
-from io import BytesIO
+from scipy.stats import linregress
 
 url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
 response = requests.get(url)
 soup = BeautifulSoup(response.text, 'html.parser')
 table = soup.find('table', {'class': 'wikitable sortable'})
 df = pd.read_html(str(table))[0]
-df.columns = [
-    'Rank', 'Title', 'Worldwide gross', 'Year', 'Notes', 'Budget', 'Opening',
-    'Director(s)'
-]
-df = df.dropna(subset=['Year', 'Worldwide gross'])
+df.columns = df.columns.str.replace('[^A-Za-z0-9_]+', '', regex=True)
+df = df.rename(columns={'Rank': 'Rank', 'Title': 'Title', 'Worldwidegross': 'WorldwideGross', 'Year': 'Year'})
+df['WorldwideGross'] = df['WorldwideGross'].astype(str).str.replace(r'[$,M]', '', regex=True).astype(float)
 df['Year'] = df['Year'].astype(int)
-df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-
-# Question 1
-q1_df = df[(df['Year'] < 2000) & (df['Worldwide gross'] >= 2000)]
-q1_answer = [str(len(q1_df))]
-
-# Question 2
-q2_df = df[df['Worldwide gross'] >= 1500]
-q2_answer = [q2_df.sort_values(by='Year').iloc[0]['Title']]
-
-# Question 3
 df['Rank'] = df['Rank'].astype(int)
-df['Peak'] = df['Worldwide gross']
-q3_answer = [str(df['Rank'].corr(df['Peak']))]
 
-# Question 4
+q1 = len(df[(df['WorldwideGross'] >= 2000) & (df['Year'] < 2000)])
+q2 = df[df['WorldwideGross'] > 1500].sort_values(by='Year').iloc[0]['Title']
+q3 = df[['Rank', 'WorldwideGross']].corr().iloc[0, 1]
+
 plt.figure(figsize=(8, 6))
-plt.scatter(df['Rank'], df['Peak'])
-z = np.polyfit(df['Rank'], df['Peak'], 1)
-p = np.poly1d(z)
-plt.plot(df['Rank'], p(df['Rank']), "r--")
-plt.xlabel("Rank")
-plt.ylabel("Peak Worldwide Gross")
-plt.title("Scatterplot of Rank vs. Peak with Regression Line")
-img = BytesIO()
+plt.scatter(df['Rank'], df['WorldwideGross'])
+slope, intercept, r_value, p_value, std_err = linregress(df['Rank'], df['WorldwideGross'])
+plt.plot(df['Rank'], slope * df['Rank'] + intercept, color='red', linestyle='dotted')
+plt.xlabel('Rank')
+plt.ylabel('Worldwide Gross')
+plt.title('Rank vs Worldwide Gross with Regression Line')
+img = io.BytesIO()
 plt.savefig(img, format='png')
-plt.close()
 img.seek(0)
-q4_answer = [
-    'data:image/png;base64,' +
-    base64.b64encode(img.read()).decode('utf-8')
-]
+plot_base64 = base64.b64encode(img.read()).decode('utf-8')
+plot_uri = f"data:image/png;base64,{plot_base64}"
+plt.close()
 
-print([q1_answer, q2_answer, q3_answer, q4_answer])
+import json
+result = [str(q1), q2, str(q3), plot_uri]
+print(json.dumps(result))
 
 Output:
 
 Error:
-D:\iitm\project2_copilot\temp_code.py:20: SyntaxWarning: invalid escape sequence '\$'
-  df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
 D:\iitm\project2_copilot\temp_code.py:13: FutureWarning: Passing literal html to 'read_html' is deprecated and will be removed in a future version. To read from a literal string, wrap it in a 'StringIO' object.
   df = pd.read_html(str(table))[0]
 Traceback (most recent call last):
@@ -88,56 +73,58 @@ import requests
 import io
 import matplotlib.pyplot as plt
 import base64
+from io import BytesIO
+import json
 
 url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
-try:
-    response = requests.get(url)
-    response.raise_for_status()
-    tables = pd.read_html(io.StringIO(response.text))
-    df = tables[0]
-except Exception as e:
-    print(f"Error fetching or parsing data: {e}")
-    exit()
-
-df = df[df['Worldwide gross'].notna()]
+response = requests.get(url)
+df = pd.read_html(response.text)[0]
+df.columns = df.columns.map(lambda x: x[1] if isinstance(x, tuple) else x)
+df = df.iloc[1:]
 df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-df['Release date'] = pd.to_datetime(df['Release date'])
+df['Year'] = df['Year'].astype(int)
 
-q1 = len(df[(df['Worldwide gross'] >= 2000) & (df['Release date'].dt.year < 2000)])
-q2_df = df[df['Worldwide gross'] > 1500]
-if not q2_df.empty:
-    q2 = q2_df.sort_values(by='Release date').iloc[0]['Film']
-else:
-    q2 = "No film grossed over $1.5B"
-q3 = df['Rank'].corr(df['Worldwide gross'])
+df_2bn_before_2000 = df[(df['Worldwide gross'] >= 2000) & (df['Year'] < 2000)]
+q1 = len(df_2bn_before_2000)
 
-plt.figure(figsize=(8, 6))
-plt.scatter(df['Rank'], df['Worldwide gross'])
-z = np.polyfit(df['Rank'], df['Worldwide gross'], 1)
+df_1_5bn = df[df['Worldwide gross'] >= 1500]
+earliest_film = df_1_5bn.sort_values(by='Year').iloc[0]['Film']
+q2 = earliest_film
+
+correlation = df['Rank'].astype(float).corr(df['Worldwide gross'].astype(float))
+q3 = correlation
+
+plt.figure(figsize=(10, 6))
+plt.scatter(df['Rank'].astype(float), df['Worldwide gross'].astype(float))
+z = np.polyfit(df['Rank'].astype(float), df['Worldwide gross'].astype(float), 1)
 p = np.poly1d(z)
-plt.plot(df['Rank'], p(df['Rank']), "r--")
-plt.xlabel('Rank')
-plt.ylabel('Worldwide gross')
-plt.title('Rank vs. Worldwide Gross')
+plt.plot(df['Rank'].astype(float), p(df['Rank'].astype(float)), "r--")
+plt.xlabel("Rank")
+plt.ylabel("Worldwide Gross")
+plt.title("Scatterplot of Rank vs Worldwide Gross with Regression Line")
 
-buf = io.BytesIO()
-plt.savefig(buf, format='png')
-data = base64.b64encode(buf.getbuffer()).decode('ascii')
-q4 = 'data:image/png;base64,' + data
+img = BytesIO()
+plt.savefig(img, format='png')
+img.seek(0)
+plot_data = base64.b64encode(img.read()).decode('utf-8')
+q4 = f"data:image/png;base64,{plot_data}"
 plt.close()
 
-import json
-print(json.dumps([str(q1), str(q2), str(q3), q4]))
+result = [str(q1), q2, str(q3), q4]
+
+print(json.dumps(result))
 
 Output:
 
 Error:
-D:\iitm\project2_copilot\temp_code.py:18: SyntaxWarning: invalid escape sequence '\$'
+D:\iitm\project2_copilot\temp_code.py:14: SyntaxWarning: invalid escape sequence '\$'
   df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
+D:\iitm\project2_copilot\temp_code.py:11: FutureWarning: Passing literal html to 'read_html' is deprecated and will be removed in a future version. To read from a literal string, wrap it in a 'StringIO' object.
+  df = pd.read_html(response.text)[0]
 Traceback (most recent call last):
 <unknown>:2: SyntaxWarning: invalid escape sequence '\$'
 <unknown>:1: SyntaxWarning: invalid escape sequence '\$'
-  File "D:\iitm\project2_copilot\temp_code.py", line 18, in <module>
+  File "D:\iitm\project2_copilot\temp_code.py", line 14, in <module>
     df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
                             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6662, in astype
@@ -168,128 +155,65 @@ ValueError: could not convert string to float: 'T2257844554'
 
 --- Attempt 3 ---
 import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import base64
-from io import BytesIO
-
-url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
-tables = pd.read_html(url)
-df = tables[0]
-df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes']
-df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-
-q1 = len(df[(df['Worldwide gross'] >= 2000000000) & (df['Year'] < 2000)])
-q2_df = df[df['Worldwide gross'] >= 1500000000].sort_values(by='Year').head(1)
-q2 = q2_df['Title'].iloc[0] if not q2_df.empty else None
-
-correlation = df['Rank'].corr(df['Worldwide gross'])
-
-plt.figure(figsize=(10, 6))
-plt.scatter(df['Rank'], df['Worldwide gross'])
-z = np.polyfit(df['Rank'], df['Worldwide gross'], 1)
-p = np.poly1d(z)
-plt.plot(df['Rank'], p(df['Rank']), "r--")
-plt.xlabel("Rank")
-plt.ylabel("Worldwide gross")
-plt.title("Scatterplot of Rank vs Worldwide Gross with Regression Line")
-buf = BytesIO()
-plt.savefig(buf, format="png")
-data = base64.b64encode(buf.getbuffer()).decode("ascii")
-q4 = "data:image/png;base64," + data
-
-import json
-result = [str(q1), q2, str(correlation), q4]
-print(json.dumps(result))
-
-Output:
-
-Error:
-D:\iitm\project2_copilot\temp_code.py:11: SyntaxWarning: invalid escape sequence '\$'
-  df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-Traceback (most recent call last):
-  File "D:\iitm\project2_copilot\temp_code.py", line 10, in <module>
-    df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes']
-    ^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6332, in __setattr__
-    return object.__setattr__(self, name, value)
-           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
-  File "pandas/_libs/properties.pyx", line 69, in pandas._libs.properties.AxisProperty.__set__
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 814, in _set_axis
-    self._mgr.set_axis(axis, labels)
-    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 238, in set_axis
-    self._validate_set_axis(axis, new_labels)
-    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\base.py", line 98, in _validate_set_axis
-    raise ValueError(
-    ...<2 lines>...
-    )
-ValueError: Length mismatch: Expected axis has 6 elements, new values have 5 elements
-
-
---- Attempt 4 ---
-import pandas as pd
+import requests
 import matplotlib.pyplot as plt
 import io
 import base64
 import numpy as np
-import requests
+from scipy.stats import linregress
 
 url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
-try:
-    response = requests.get(url)
-    response.raise_for_status()
-    df = pd.read_html(response.text)[0]
-except Exception as e:
-    print(f"Error fetching or parsing data: {e}")
-    exit()
-df.columns = df.columns.str.replace(' \(USD\)', '', regex=True)
-df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes', 'Ref']
-df = df[['Rank', 'Title', 'Worldwide gross', 'Year']]
-df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
-df_2bn_before_2000 = df[(df['Worldwide gross'] >= 2000000000) & (df['Year'] < 2000)]
-q1 = [str(len(df_2bn_before_2000))]
-df_over_1_5bn = df[df['Worldwide gross'] > 1500000000]
-earliest_film = df_over_1_5bn.sort_values(by='Year').iloc[0]['Title']
-q2 = [earliest_film]
+response = requests.get(url)
+df = pd.read_html(response.text)[0]
+df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[\$,]', '', regex=True).astype(float)
+df['Year'] = df['Year'].astype(int)
+
+# 1. How many $2 bn movies were released before 2000?
+before_2000 = df[(df['Year'] < 2000) & (df['Worldwide gross'] >= 2000000000)]
+q1_answer = [str(len(before_2000))]
+
+# 2. Which is the earliest film that grossed over $1.5 bn?
+over_1_5_bn = df[df['Worldwide gross'] > 1500000000]
+earliest_film = over_1_5_bn.sort_values(by='Year').iloc[0]
+q2_answer = [earliest_film['Film']]
+
+# 3. What's the correlation between the Rank and Worldwide gross?
 correlation = df['Rank'].corr(df['Worldwide gross'])
-q3 = [str(correlation)]
+q3_answer = [str(correlation)]
+
+# 4. Draw a scatterplot of Rank and Worldwide gross with a dotted red regression line
+x = df['Rank']
+y = df['Worldwide gross']
+slope, intercept, r_value, p_value, std_err = linregress(x, y)
+line = slope * x + intercept
+
 plt.figure(figsize=(10, 6))
-plt.scatter(df['Rank'], df['Worldwide gross'])
-z = np.polyfit(df['Rank'], df['Worldwide gross'], 1)
-p = np.poly1d(z)
-plt.plot(df['Rank'], p(df['Rank']), "r--")
-plt.xlabel("Rank")
-plt.ylabel("Worldwide Gross")
-plt.title("Scatterplot of Rank vs Worldwide Gross with Regression Line")
+plt.scatter(x, y)
+plt.plot(x, line, color='red', linestyle='dotted')
+plt.xlabel('Rank')
+plt.ylabel('Worldwide Gross')
+plt.title('Rank vs. Worldwide Gross with Regression Line')
+plt.grid(True)
+
 img = io.BytesIO()
 plt.savefig(img, format='png')
 img.seek(0)
 plot_url = base64.b64encode(img.read()).decode()
 plt.close()
-q4 = [f"data:image/png;base64,{plot_url}"]
-print(q1)
-print(q2)
-print(q3)
-print(q4)
+q4_answer = ["data:image/png;base64," + plot_url]
+
+import json
+print(json.dumps(q1_answer + q2_answer + q3_answer + q4_answer))
 
 Output:
 
 Error:
-D:\iitm\project2_copilot\temp_code.py:16: SyntaxWarning: invalid escape sequence '\('
-  df.columns = df.columns.str.replace(' \(USD\)', '', regex=True)
-D:\iitm\project2_copilot\temp_code.py:19: SyntaxWarning: invalid escape sequence '\$'
-  df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-D:\iitm\project2_copilot\temp_code.py:12: FutureWarning: Passing literal html to 'read_html' is deprecated and will be removed in a future version. To read from a literal string, wrap it in a 'StringIO' object.
+D:\iitm\project2_copilot\temp_code.py:11: FutureWarning: Passing literal html to 'read_html' is deprecated and will be removed in a future version. To read from a literal string, wrap it in a 'StringIO' object.
   df = pd.read_html(response.text)[0]
 Traceback (most recent call last):
-<unknown>:2: SyntaxWarning: invalid escape sequence '\$'
-<unknown>:1: SyntaxWarning: invalid escape sequence '\$'
-  File "D:\iitm\project2_copilot\temp_code.py", line 19, in <module>
-    df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float)
-                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "D:\iitm\project2_copilot\temp_code.py", line 12, in <module>
+    df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[\$,]', '', regex=True).astype(float)
+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6662, in astype
     new_data = self._mgr.astype(dtype=dtype, copy=copy, errors=errors)
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 430, in astype
@@ -313,127 +237,60 @@ Traceback (most recent call last):
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 133, in _astype_nansafe
     return arr.astype(dtype, copy=True)
            ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
-ValueError: could not convert string to float: 'Avatar'
+ValueError: could not convert string to float: 'T2257844554'
 
 
---- Attempt 5 ---
+--- Attempt 4 ---
 import pandas as pd
 import requests
 import io
 import base64
 import matplotlib.pyplot as plt
 import seaborn as sns
-from io import BytesIO
 
 url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
 response = requests.get(url)
 df = pd.read_html(io.StringIO(response.text))[0]
 
-df.columns = df.columns.str.replace(r' \(USD\)', '', regex=True)
-df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes']
-df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float, errors='coerce')
+df = df.rename(columns={'Rank': 'Rank', 'Film': 'Film', 'Worldwide gross': 'Worldwide gross', 'Year': 'Year'})
+df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[$,]', '', regex=True).astype(float)
 
-df['Year'] = pd.to_datetime(df['Year'], format='%Y', errors='coerce').dt.year
+df_2bn_before_2000 = df[(df['Worldwide gross'] >= 2000000000) & (df['Year'] < 2000)]
+count_2bn_before_2000 = len(df_2bn_before_2000)
 
-billion_2_movies_before_2000 = df[(df['Worldwide gross'] >= 2000000000) & (df['Year'] < 2000)]['Title'].count()
-
-earliest_1_5_billion_movie = df[df['Worldwide gross'] > 1500000000].sort_values(by='Year')['Title'].iloc[0] if not df[df['Worldwide gross'] > 1500000000].empty else None
+df_1_5bn = df[df['Worldwide gross'] > 1500000000]
+earliest_1_5bn_film = df_1_5bn.sort_values(by='Year').iloc[0]['Film']
 
 correlation = df['Rank'].corr(df['Worldwide gross'])
 
 plt.figure(figsize=(10, 6))
-sns.regplot(x='Rank', y='Worldwide gross', data=df, scatter_kws={'alpha':0.5}, line_kws={'color': 'red', 'linestyle': '--'})
-plt.gca().invert_xaxis()
+sns.regplot(x='Rank', y='Worldwide gross', data=df, scatter_kws={'s': 10}, line_kws={'color': 'red', 'linestyle': ':'})
 plt.xlabel('Rank')
 plt.ylabel('Worldwide Gross')
-plt.title('Scatterplot of Rank vs. Worldwide Gross with Regression Line')
-buf = BytesIO()
-plt.savefig(buf, format='png')
-data = base64.b64encode(buf.getbuffer()).decode('ascii')
-image_uri = f'data:image/png;base64,{data}'
-plt.close()
-
-print([str(billion_2_movies_before_2000), earliest_1_5_billion_movie, str(correlation), image_uri])
-
-Output:
-
-Error:
-D:\iitm\project2_copilot\temp_code.py:15: SyntaxWarning: invalid escape sequence '\$'
-  df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float, errors='coerce')
-Traceback (most recent call last):
-  File "D:\iitm\project2_copilot\temp_code.py", line 14, in <module>
-    df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes']
-    ^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6332, in __setattr__
-    return object.__setattr__(self, name, value)
-           ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
-  File "pandas/_libs/properties.pyx", line 69, in pandas._libs.properties.AxisProperty.__set__
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 814, in _set_axis
-    self._mgr.set_axis(axis, labels)
-    ~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 238, in set_axis
-    self._validate_set_axis(axis, new_labels)
-    ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\base.py", line 98, in _validate_set_axis
-    raise ValueError(
-    ...<2 lines>...
-    )
-ValueError: Length mismatch: Expected axis has 6 elements, new values have 5 elements
-
-
---- Attempt 6 ---
-import pandas as pd
-import requests
-import io
-import base64
-import matplotlib.pyplot as plt
-import seaborn as sns
-from io import BytesIO
-
-url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
-response = requests.get(url)
-df = pd.read_html(io.StringIO(response.text))[0]
-df.columns = df.columns.str.replace('\[.*\]', '', regex=True)
-df.columns = ['Rank', 'Title', 'Worldwide gross', 'Year', 'Notes', 'Ref']
-df = df[['Rank', 'Title', 'Worldwide gross', 'Year']]
-df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float, errors='coerce')
-df['Year'] = pd.to_numeric(df['Year'], errors='coerce')
-
-billion_2_movies_before_2000 = df[(df['Worldwide gross'] >= 2000000000) & (df['Year'] < 2000)]
-count_2bn = len(billion_2_movies_before_2000)
-
-earliest_over_1_5bn = df[df['Worldwide gross'] > 1500000000].sort_values(by='Year').iloc[0]['Title']
-
-correlation = df['Rank'].corr(df['Worldwide gross'])
-
-sns.set_theme()
-plt.figure(figsize=(10, 6))
-sns.regplot(x='Rank', y='Worldwide gross', data=df, scatter_kws={'s': 5})
-plt.xlabel('Rank')
-plt.ylabel('Worldwide Gross')
-plt.title('Rank vs Worldwide Gross')
-buf = BytesIO()
+plt.title('Scatterplot of Rank vs Worldwide Gross with Regression Line')
+buf = io.BytesIO()
 plt.savefig(buf, format='png')
 data = base64.b64encode(buf.getbuffer()).decode()
-uri = 'data:image/png;base64,' + data
+data_uri = "data:image/png;base64," + data
 plt.close()
 
 
-print([str(count_2bn), earliest_over_1_5bn, str(correlation), uri])
+result = [
+    str(count_2bn_before_2000),
+    earliest_1_5bn_film,
+    str(correlation),
+    data_uri
+]
+import json
+print(json.dumps(result))
 
 Output:
 
 Error:
-D:\iitm\project2_copilot\temp_code.py:12: SyntaxWarning: invalid escape sequence '\['
-  df.columns = df.columns.str.replace('\[.*\]', '', regex=True)
-D:\iitm\project2_copilot\temp_code.py:15: SyntaxWarning: invalid escape sequence '\$'
-  df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float, errors='coerce')
 Traceback (most recent call last):
-<unknown>:2: SyntaxWarning: invalid escape sequence '\$'
-<unknown>:1: SyntaxWarning: invalid escape sequence '\$'
-  File "D:\iitm\project2_copilot\temp_code.py", line 15, in <module>
-    df['Worldwide gross'] = df['Worldwide gross'].replace({'\$': '', ',': ''}, regex=True).astype(float, errors='coerce')
-                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\iitm\project2_copilot\temp_code.py", line 13, in <module>
+    df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[$,]', '', regex=True).astype(float)
+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6662, in astype
     new_data = self._mgr.astype(dtype=dtype, copy=copy, errors=errors)
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 430, in astype
@@ -450,7 +307,133 @@ Traceback (most recent call last):
     applied = getattr(b, f)(**kwargs)
   File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\blocks.py", line 784, in astype
     new_values = astype_array_safe(values, dtype, copy=copy, errors=errors)
-  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 222, in astype_array_safe
-    raise ValueError(invalid_arg)
-ValueError: Expected value of kwarg 'errors' to be one of ['raise', 'ignore']. Supplied value is 'coerce'
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 237, in astype_array_safe
+    new_values = astype_array(values, dtype, copy=copy)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 182, in astype_array
+    values = _astype_nansafe(values, dtype, copy=copy)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 133, in _astype_nansafe
+    return arr.astype(dtype, copy=True)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+ValueError: could not convert string to float: 'T2257844554'
+
+
+--- Attempt 5 ---
+import requests
+import pandas as pd
+import io
+import matplotlib.pyplot as plt
+import base64
+from io import BytesIO
+import re
+import json
+
+url = 'https://en.wikipedia.org/wiki/List_of_highest-grossing_films'
+response = requests.get(url)
+df = pd.read_html(io.StringIO(response.text))[0]
+df = df[df['Worldwide gross'].notna()]
+df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[$,T]', '', regex=True).astype(float)
+df['Release year'] = df['Release year'].astype(str).str.extract(r'(\d{4})').astype(int)
+df_2bn_pre2000 = df[(df['Worldwide gross'] >= 2000) & (df['Release year'] < 2000)]
+count_2bn_pre2000 = len(df_2bn_pre2000)
+df_1_5bn = df[df['Worldwide gross'] > 1500]
+earliest_1_5bn_film = df_1_5bn.sort_values(by='Release year').iloc[0]['Film']
+correlation = df['Rank'].corr(df['Worldwide gross'])
+plt.figure(figsize=(10, 6))
+plt.scatter(df['Rank'], df['Worldwide gross'])
+plt.plot(df['Rank'],  df['Worldwide gross'].mean() + (df['Rank'] - df['Rank'].mean()) * correlation * df['Worldwide gross'].std() / df['Rank'].std(), color='red', linestyle='dotted')
+plt.xlabel('Rank')
+plt.ylabel('Worldwide Gross')
+plt.title('Scatterplot of Rank vs Worldwide Gross with Regression Line')
+buf = BytesIO()
+plt.savefig(buf, format='png')
+data = base64.b64encode(buf.getbuffer()).decode('ascii')
+data_uri = f'data:image/png;base64,{data}'
+plt.close()
+result = [str(count_2bn_pre2000), earliest_1_5bn_film, str(correlation), data_uri]
+print(json.dumps(result))
+
+Output:
+
+Error:
+Traceback (most recent call last):
+  File "D:\iitm\project2_copilot\temp_code.py", line 14, in <module>
+    df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[$,T]', '', regex=True).astype(float)
+                            ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\generic.py", line 6662, in astype
+    new_data = self._mgr.astype(dtype=dtype, copy=copy, errors=errors)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 430, in astype
+    return self.apply(
+           ~~~~~~~~~~^
+        "astype",
+        ^^^^^^^^^
+    ...<3 lines>...
+        using_cow=using_copy_on_write(),
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    )
+    ^
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\managers.py", line 363, in apply
+    applied = getattr(b, f)(**kwargs)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\internals\blocks.py", line 784, in astype
+    new_values = astype_array_safe(values, dtype, copy=copy, errors=errors)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 237, in astype_array_safe
+    new_values = astype_array(values, dtype, copy=copy)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 182, in astype_array
+    values = _astype_nansafe(values, dtype, copy=copy)
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\dtypes\astype.py", line 133, in _astype_nansafe
+    return arr.astype(dtype, copy=True)
+           ~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+ValueError: could not convert string to float: 'SM1922598800'
+
+
+--- Attempt 6 ---
+import requests
+import pandas as pd
+import io
+import base64
+import matplotlib.pyplot as plt
+import seaborn as sns
+from scipy.stats import linregress
+
+response = requests.get('https://en.wikipedia.org/wiki/List_of_highest-grossing_films')
+df = pd.read_html(io.StringIO(response.text))[0]
+df.columns = df.columns.droplevel()
+df['Worldwide gross'] = df['Worldwide gross'].str.replace(r'[$,T\n]', '', regex=True).astype(float)
+df['Year'] = df['Year'].astype(int)
+
+q1 = len(df[(df['Worldwide gross'] >= 2000) & (df['Year'] < 2000)])
+q2_df = df[df['Worldwide gross'] > 1500].sort_values(by='Year').iloc[0]
+q2 = q2_df['Film']
+
+correlation = df['Rank'].corr(df['Worldwide gross'])
+
+sns.set_theme()
+plt.figure(figsize=(10, 6))
+sns.scatterplot(x='Rank', y='Worldwide gross', data=df)
+slope, intercept, r_value, p_value, std_err = linregress(df['Rank'], df['Worldwide gross'])
+sns.lineplot(x=df['Rank'], y=slope * df['Rank'] + intercept, color='red', linestyle='--')
+plt.xlabel('Rank')
+plt.ylabel('Worldwide Gross (Billions)')
+plt.title('Rank vs. Worldwide Gross with Regression Line')
+buf = io.BytesIO()
+plt.savefig(buf, format='png')
+data = base64.b64encode(buf.getbuffer()).decode('ascii')
+img_uri = f'data:image/png;base64,{data}'
+plt.close()
+print(f'["{q1}", "{q2}", "{correlation}", "{img_uri}"]')
+
+Output:
+
+Error:
+Traceback (most recent call last):
+  File "D:\iitm\project2_copilot\temp_code.py", line 11, in <module>
+    df.columns = df.columns.droplevel()
+                 ~~~~~~~~~~~~~~~~~~~~^^
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\indexes\base.py", line 2164, in droplevel
+    return self._drop_level_numbers(levnums)
+           ~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^
+  File "D:\iitm\projectta\env\Lib\site-packages\pandas\core\indexes\base.py", line 2175, in _drop_level_numbers
+    raise ValueError(
+    ...<2 lines>...
+    )
+ValueError: Cannot remove 1 levels from an index with 1 levels: at least one level must be left.
 
