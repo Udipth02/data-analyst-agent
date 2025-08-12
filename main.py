@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 load_dotenv()
 import json
 import re
+import ast
 
 import requests
 from prompt_tools import PromptBuilder, PromptLogger, PromptValidator, PromptDebugger
@@ -32,21 +33,18 @@ SYSTEM_INSTRUCTION = """
     - Invert ranks on the x-axis for better readability.
     - Return the plot as a base64-encoded data URI.
 
-    Only return valid Python code that can be run directly in a script."""
+    Only return valid Python code that can be run directly in a script
+    The python code must return output in same sequence and expected format only as per the questions given here.
+    The python code should Only return the raw comma-separated values.
+    The python code should not return JSON, dictionaries, or any structured format. 
+    The python code should not include labels, keys, or explanations. 
+    The python code should Return the final output as a Python list where numbers are unquoted (e.g., 2.8, 7)
+    and strings are quoted (e.g., "Bob"). 
+    The python code should not wrap numeric values in quotes.
 
-def build_prompt_with_csv_schema(task_text: str, base_prompt: str) -> str:
-    csv_path = extract_csv_path(task_text)
-    if not csv_path:
-        return base_prompt  # No CSV detected
-
-    try:
-        injector = CsvSchemaInjector(csv_path)
-        return injector.inject_into_prompt(base_prompt)
-    except Exception as e:
-        # Log and continue without schema injection
-        print(f"[CsvAwarePromptBuilder] Failed to inject schema: {e}")
-        return base_prompt
     
+"""
+
 def call_aipipe(prompt: str, model: str = "gpt-4.1-nano", temperature: float = 0.7, system_prompt: str = None) -> str:
     base_url = os.getenv("OPENAI_BASE_URL", "https://aipipe.org/openai/v1")
     headers = {
@@ -184,12 +182,6 @@ def is_fallback_output(output: str) -> bool:
     except Exception:
         return False
     
-
-def is_function_only(code: str) -> bool:
-    has_function = bool(re.search(r"def\s+\w+\s*\(", code))
-    has_main_block = "__main__" in code or "print(" in code or "result =" in code
-    return has_function and not has_main_block
-
 def is_semantically_invalid(output: str) -> bool:
     try:
         parsed = json.loads(output)
@@ -260,20 +252,12 @@ def refine_code_loop(prompt: str, max_attempts: int = 3) -> str:
         log_to_output_file(final_prompt_log, section="Final Prompt")
         log_to_output_file(final_output_log, section="Final Output")
 
-    return final_prompt_log + final_output_log
+    if not stderr:
+        return stdout.strip()  # This should be the JSON array string
+    else:
+        raise RuntimeError("Final attempt failed. No valid output.")
+    # return final_prompt_log + final_output_log
 
-def wrap_code_with_main(code: str) -> str:
-    # Extract function name
-    match = re.search(r"def\s+(\w+)\s*\(", code)
-    func_name = match.group(1) if match else "main"
-
-    # Add execution block
-    execution_block = f"""
-if __name__ == "__main__":
-    result = {func_name}()
-    print(result)
-"""
-    return code + "\n" + execution_block
 
 @app.post("/api/")
 async def analyze_data(file: UploadFile = File(...)):
@@ -289,10 +273,13 @@ async def analyze_data(file: UploadFile = File(...)):
 
 
         final_output = refine_code_loop(raw_prompt)
-        
-        return {"status": "completed", "result": final_output}
+       
+        # return {final_output}
+        return JSONResponse(content=final_output)
     except Exception as e:
+        log_to_output_file(f"Exception: {str(e)}", section="Agent Error")
         return JSONResponse(status_code=400, content={"error": str(e)})
+
 
 @app.get("/")
 async def root():
