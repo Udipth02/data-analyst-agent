@@ -224,7 +224,7 @@ def log_to_output_file(message: str, filename: str = "output.txt", section: str 
 #         "network_graph": "iVBORw0KGgoAAAANSUhEUgAAAAUA...",
 #         "degree_histogram": "iVBORw0KGgoAAAANSUhEUgAAAAUA..."
 #     })
-def refine_code_loop(prompt: str, max_attempts: int = 2) -> str:
+def refine_code_loop(prompt: str, max_attempts: int = 6) -> str:
     all_outputs = []
     builder = PromptBuilder(system_instruction=SYSTEM_INSTRUCTION)
     builder.add_section("Task", prompt)
@@ -279,39 +279,39 @@ import ast, json, os
 app = FastAPI()
 
 @app.post("/api/")
-async def analyze_data(
-    request: Request,
-    file: Optional[UploadFile] = File(None),
-    question: Optional[str] = Form(None)
-):
+async def analyze_data(request: Request):
     print("✅ /api/ endpoint triggered")
-   
+
     try:
         with open("output.txt", "w") as f:
-          f.write("=== New Execution ===\n")  
+            f.write("=== New Execution ===\n")
 
-        
+        # Parse form data
+        form = await request.form()
         raw_prompt = None
-        content_type = request.headers.get("content-type", "")
+        file = None
 
-        # Handle JSON input (Promptfoo)
-        if "application/json" in content_type:
-            body = await request.json()
-            raw_prompt = body.get("question")
-            if not raw_prompt:
-                raise ValueError("Missing 'question' field in JSON body")
+        # Inspect form items
+        for key, val in form.items():
+            if hasattr(val, "filename") and val.filename:
+                file = val
+            elif key == "question":
+                raw_prompt = val
 
-        # Handle file upload (try.sh)
-        elif file:
+        # If file is present but no question field, read file content
+        if file and not raw_prompt:
             content = await file.read()
             raw_prompt = content.decode("utf-8")
 
-        # Handle form field
-        elif question:
-            raw_prompt = question
-
-        else:
+        # Final check
+        if not raw_prompt:
             raise ValueError("No valid input provided. Send JSON with 'question', or upload a file.")
+
+        # Log form contents for debugging
+        with open("output.txt", "a") as f:
+            f.write("\n--- Form Contents ---\n")
+            for key, val in form.items():
+                f.write(f"{key}: {getattr(val, 'filename', val)}\n")
 
         # Inject CSV schema if path is found
         csv_path = extract_csv_path(raw_prompt)
@@ -332,7 +332,7 @@ async def analyze_data(
                 parsed = json.loads(final_output)
             except Exception:
                 raise ValueError("Agent output is not valid JSON or Python literal")
-        # Final check
+
         if not isinstance(parsed, (dict, list)):
             raise ValueError("Agent output must be a dict or list")
 
@@ -350,6 +350,7 @@ async def analyze_data(
         with open("output.txt", "a") as f:
             f.write(f"\n--- Exception ---\n{str(e)}\n")
         return JSONResponse(status_code=400, content={"error": str(e)})
+    
 @app.get("/")
 async def root():
     return {"message": "Data Analyst Agent is running!"}
