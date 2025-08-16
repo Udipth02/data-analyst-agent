@@ -1,4 +1,4 @@
-from fastapi import FastAPI, File, UploadFile
+from fastapi import FastAPI, Request, UploadFile, File, Form,Response
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import subprocess
@@ -7,9 +7,18 @@ from dotenv import load_dotenv
 load_dotenv()
 import json
 import re
-import ast
+import ast, json, os
 
 import requests
+from typing import Optional
+from datetime import datetime
+
+from pydantic import BaseModel
+
+
+class Query(BaseModel):
+    question: str
+
 from prompt_tools import PromptBuilder, PromptLogger, PromptValidator, PromptDebugger
 # At the top of your script
 SYSTEM_INSTRUCTION = """
@@ -34,13 +43,6 @@ SYSTEM_INSTRUCTION = """
     - Return the plot as a base64-encoded data URI.
 
     Only return valid Python code that can be run directly in a script
-    The python code must return output in same sequence and expected format only as per the questions given here.
-    The python code should Only return the raw comma-separated values.
-    The python code should not return JSON, dictionaries, or any structured format. 
-    The python code should not include labels, keys, or explanations. 
-    The python code should Return the final output as a Python list where numbers are unquoted (e.g., 2.8, 7)
-    and strings are quoted (e.g., "Bob"). 
-    The python code should not wrap numeric values in quotes.
 
     
 """
@@ -212,8 +214,17 @@ def log_to_output_file(message: str, filename: str = "output.txt", section: str 
     with open(filename, "a", encoding="utf-8") as f:
         f.write(header + message + "\n")
 
-
-def refine_code_loop(prompt: str, max_attempts: int = 3) -> str:
+# def refine_code_loop(prompt: str) -> str:
+#     return json.dumps({
+#         "edge_count": 7,
+#         "highest_degree_node": "Bob",
+#         "average_degree": 2.8,
+#         "density": 0.7,
+#         "shortest_path_alice_eve": 2,
+#         "network_graph": "iVBORw0KGgoAAAANSUhEUgAAAAUA...",
+#         "degree_histogram": "iVBORw0KGgoAAAANSUhEUgAAAAUA..."
+#     })
+def refine_code_loop(prompt: str, max_attempts: int = 2) -> str:
     all_outputs = []
     builder = PromptBuilder(system_instruction=SYSTEM_INSTRUCTION)
     builder.add_section("Task", prompt)
@@ -259,28 +270,86 @@ def refine_code_loop(prompt: str, max_attempts: int = 3) -> str:
     # return final_prompt_log + final_output_log
 
 
+
+from fastapi import FastAPI, Request, UploadFile, File, Form
+from fastapi.responses import JSONResponse
+from typing import Optional
+import ast, json, os
+
+app = FastAPI()
+
 @app.post("/api/")
-async def analyze_data(file: UploadFile = File(...)):
+async def analyze_data(
+    request: Request,
+    file: Optional[UploadFile] = File(None),
+    question: Optional[str] = Form(None)
+):
+    print("✅ /api/ endpoint triggered")
+   
     try:
         with open("output.txt", "w") as f:
-            f.write("=== New Execution ===\n")
-        content = await file.read()
-        raw_prompt = content.decode("utf-8")
+          f.write("=== New Execution ===\n")  
+
+        
+        raw_prompt = None
+        content_type = request.headers.get("content-type", "")
+
+        # Handle JSON input (Promptfoo)
+        if "application/json" in content_type:
+            body = await request.json()
+            raw_prompt = body.get("question")
+            if not raw_prompt:
+                raise ValueError("Missing 'question' field in JSON body")
+
+        # Handle file upload (try.sh)
+        elif file:
+            content = await file.read()
+            raw_prompt = content.decode("utf-8")
+
+        # Handle form field
+        elif question:
+            raw_prompt = question
+
+        else:
+            raise ValueError("No valid input provided. Send JSON with 'question', or upload a file.")
+
+        # Inject CSV schema if path is found
         csv_path = extract_csv_path(raw_prompt)
         if csv_path and os.path.exists(csv_path):
             injector = CsvSchemaInjector(csv_path)
             raw_prompt = injector.inject_into_prompt(raw_prompt)
 
-
+        # Run agent
         final_output = refine_code_loop(raw_prompt)
-       
-        # return {final_output}
-        return JSONResponse(content=final_output)
+
+        # Parse output safely
+        try:
+            parsed = ast.literal_eval(final_output)
+            if not isinstance(parsed, (dict, list)):
+                raise ValueError("Agent output must be a dict or list")
+        except Exception:
+            try:
+                parsed = json.loads(final_output)
+            except Exception:
+                raise ValueError("Agent output is not valid JSON or Python literal")
+        # Final check
+        if not isinstance(parsed, (dict, list)):
+            raise ValueError("Agent output must be a dict or list")
+
+        # Return clean JSON
+        with open("output.txt", "a") as f:
+            f.write("\n--- Final Parsed Output ---\n")
+            f.write(json.dumps(parsed, indent=2))
+
+        return Response(
+            content=json.dumps({"output": json.dumps(parsed)}),
+            media_type="application/json"
+        )
+
     except Exception as e:
-        log_to_output_file(f"Exception: {str(e)}", section="Agent Error")
+        with open("output.txt", "a") as f:
+            f.write(f"\n--- Exception ---\n{str(e)}\n")
         return JSONResponse(status_code=400, content={"error": str(e)})
-
-
 @app.get("/")
 async def root():
     return {"message": "Data Analyst Agent is running!"}

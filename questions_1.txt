@@ -1,1 +1,0 @@
-Write a Python script that reads a CSV file named 'data.csv', calculates the average of a column named 'sales', and prints the result.
